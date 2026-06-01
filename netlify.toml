@@ -1,0 +1,13 @@
+# Tells Netlify where the serverless function lives and which Node to use.
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Optional friendly URL: /api/epg  ->  the function
+[[redirects]]
+  from = "/api/epg"
+  to = "/.netlify/functions/epg"
+  status = 200
