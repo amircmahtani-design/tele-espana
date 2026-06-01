@@ -40,6 +40,15 @@
   .search input:focus{border-color:var(--gold);}
   .search svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:18px;height:18px;stroke:var(--muted2);}
   /* date strip */
+  .toolbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.03em;padding:8px 12px;border-radius:13px;cursor:pointer;white-space:nowrap;}
+  .toolbtn.active{background:var(--gold);color:#1a1221;border-color:transparent;}
+  .card.dragging{opacity:.45;border-color:var(--gold);}
+  .card.dragover{border-color:var(--gold);box-shadow:0 -3px 0 -1px var(--gold);}
+  .drag-handle{display:none;flex:0 0 auto;color:var(--muted2);font-size:22px;line-height:1;padding:0 4px 0 0;cursor:grab;touch-action:none;}
+  body.reordering .drag-handle{display:block;}
+  body.reordering .card{cursor:default;}
+  body.reordering .now-title,body.reordering .row,body.reordering .progwrap,body.reordering .next,body.reordering .mini,body.reordering .seeall,body.reordering .emptyday,body.reordering .chev{display:none;}
+  body.reordering .card{padding:12px 14px;}
   .days{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:11px;padding-bottom:2px;scrollbar-width:none;}
   .days::-webkit-scrollbar{display:none;}
   .day{flex:0 0 auto;min-width:58px;padding:8px 12px;border-radius:13px;border:1px solid var(--line);background:var(--bg2);text-align:center;cursor:pointer;transition:.15s;}
@@ -83,6 +92,10 @@
   .sheet.on{transform:translateY(0);}
   .grab{width:38px;height:4px;border-radius:99px;background:var(--line);margin:10px auto 4px;}
   .sheet-h{padding:8px 18px 12px;border-bottom:1px solid var(--line);}
+  .sheet-topbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+  .backbtn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:inherit;font-size:14px;font-weight:700;padding:8px 14px 8px 11px;border-radius:12px;cursor:pointer;}
+  .backbtn:active{transform:scale(.96);}
+  .backbtn .ar{font-size:18px;line-height:1;margin-top:-1px;}
   .sheet-hrow{display:flex;align-items:center;gap:12px;}
   .sheet-h .ch-name{font-size:18px;}
   .stabs{display:flex;gap:7px;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;scrollbar-width:none;}
@@ -119,6 +132,9 @@
       <input id="q" type="search" placeholder="Buscar canal…" autocomplete="off">
     </div>
     <div class="days" id="days"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px;">
+      <button class="toolbtn" id="reorderBtn">↕ Reordenar canales</button>
+    </div>
   </div>
 </header>
 
@@ -128,6 +144,9 @@
 <div class="sheet" id="sheet">
   <div class="grab"></div>
   <div class="sheet-h">
+    <div class="sheet-topbar">
+      <button class="backbtn" id="backBtn"><span class="ar">‹</span> Volver</button>
+    </div>
     <div class="sheet-hrow">
       <div class="logo" id="sheetLogo">·</div>
       <div><div class="ch-name" id="sheetName">Canal</div><div class="ch-num" id="sheetNum"></div></div>
@@ -174,11 +193,23 @@ function sampleModel(){
 
 /* ========================= STATE + LOAD ========================= */
 let MODEL=null,selectedDay=null;
+function applySavedOrder(){
+  let order=[];
+  try{order=JSON.parse(localStorage.getItem("teleOrder")||"[]");}catch(e){}
+  if(!order.length)return;
+  MODEL.channels.sort((a,b)=>{
+    let ia=order.indexOf(a.name),ib=order.indexOf(b.name);
+    if(ia<0)ia=999;if(ib<0)ib=999;return ia-ib;
+  });
+}
+function saveOrder(){
+  try{localStorage.setItem("teleOrder",JSON.stringify(MODEL.channels.map(c=>c.name)));}catch(e){}
+}
 async function loadData(){
   try{const r=await fetch(FEED_ENDPOINT,{cache:"no-store"});
-    if(r.ok){const j=await r.json();if(j.channels&&j.channels.length){MODEL={...j,sample:false};indexDays();return;}}
+    if(r.ok){const j=await r.json();if(j.channels&&j.channels.length){MODEL={...j,sample:false};indexDays();applySavedOrder();return;}}
   }catch(e){}
-  MODEL=sampleModel();indexDays();
+  MODEL=sampleModel();indexDays();applySavedOrder();
 }
 function keyOf(ms){return new Intl.DateTimeFormat("en-CA",{timeZone:MODEL.tz,year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(ms));}
 function indexDays(){
@@ -227,7 +258,7 @@ function renderList(filter=""){
     const gi=MODEL.channels.indexOf(ch);
     const progs=(ch._days&&ch._days[selectedDay])||[];
     const logo=ch.icon?`<img src="${ch.icon}" loading="lazy" onerror="this.remove()">`:initials(ch.name);
-    const head=`<div class="top"><div class="logo" style="background:linear-gradient(145deg,${ch.color},${shade(ch.color,-28)})">${logo}</div><div class="ch-meta"><div class="ch-name">${esc(ch.name)}</div><div class="ch-num">Canal ${ch.num}</div></div><div class="chev">›</div></div>`;
+    const head=`<div class="top"><div class="drag-handle" data-i="${gi}">⠿</div><div class="logo" style="background:linear-gradient(145deg,${ch.color},${shade(ch.color,-28)})">${logo}</div><div class="ch-meta"><div class="ch-name">${esc(ch.name)}</div><div class="ch-num">Canal ${ch.num}</div></div><div class="chev">›</div></div>`;
     if(!progs.length) return `<div class="card" data-i="${gi}">${head}<div class="emptyday">Sin información de programación para este día.</div></div>`;
     if(isToday){
       const i=curIndex(progs),cur=progs[i],nxt=progs[i+1];
@@ -248,7 +279,74 @@ function renderList(filter=""){
       <div class="mini">${ev.map(p=>`<div class="mrow"><span class="mt">${fmtT(p.s)}</span><span class="mn">${esc(p.t)}</span></div>`).join("")}</div>
       <div class="seeall">Ver parrilla completa · ${progs.length} programas ›</div></div>`;
   }).join("");
-  [...listEl.querySelectorAll(".card")].forEach(el=>el.onclick=()=>openSheet(+el.dataset.i,selectedDay));
+  [...listEl.querySelectorAll(".card")].forEach(el=>el.onclick=()=>{ if(!reorderMode) openSheet(+el.dataset.i,selectedDay); });
+  if(reorderMode) attachDrag();
+}
+
+/* ===================== REORDER (drag & drop) ===================== */
+let reorderMode=false, dragName=null;
+function setReorder(on){
+  reorderMode=on;
+  document.body.classList.toggle("reordering",on);
+  const b=document.getElementById("reorderBtn");
+  b.classList.toggle("active",on);
+  b.textContent = on ? "✓ Hecho" : "↕ Reordenar canales";
+  renderList(document.getElementById("q").value);
+}
+document.getElementById("reorderBtn").onclick=()=>setReorder(!reorderMode);
+
+function cardEls(){return [...listEl.querySelectorAll(".card")];}
+function reorderByDrop(fromName,toName,after){
+  const ch=MODEL.channels;
+  const fi=ch.findIndex(c=>c.name===fromName); if(fi<0)return;
+  const moved=ch.splice(fi,1)[0];
+  let ti=ch.findIndex(c=>c.name===toName);
+  if(ti<0){ch.splice(fi,0,moved);return;}
+  ch.splice(after?ti+1:ti,0,moved);
+  saveOrder();
+}
+function nameOfCard(card){return card.querySelector(".ch-name").textContent;}
+function attachDrag(){
+  const cards=cardEls();
+  cards.forEach(card=>{
+    const handle=card.querySelector(".drag-handle");
+    if(!handle)return;
+    // ---- Pointer (covers touch + mouse) ----
+    handle.onpointerdown=(e)=>{
+      e.preventDefault();
+      dragName=nameOfCard(card);
+      card.classList.add("dragging");
+      const move=(ev)=>{
+        const y=ev.clientY;
+        let over=null;
+        for(const c of cardEls()){
+          if(c===card)continue;
+          const r=c.getBoundingClientRect();
+          if(y>=r.top&&y<=r.bottom){over=c;break;}
+        }
+        cardEls().forEach(c=>c.classList.remove("dragover"));
+        if(over)over.classList.add("dragover");
+      };
+      const up=(ev)=>{
+        document.removeEventListener("pointermove",move);
+        document.removeEventListener("pointerup",up);
+        const y=ev.clientY; let over=null,after=false;
+        for(const c of cardEls()){
+          if(c===card)continue;
+          const r=c.getBoundingClientRect();
+          if(y>=r.top&&y<=r.bottom){over=c;after=(y> r.top+r.height/2);break;}
+        }
+        // dropped below the last card -> place at end
+        const last=cardEls()[cardEls().length-1];
+        if(!over && last && y> last.getBoundingClientRect().bottom){over=last;after=true;}
+        cardEls().forEach(c=>{c.classList.remove("dragover");c.classList.remove("dragging");});
+        if(over){reorderByDrop(dragName,nameOfCard(over),after);renderList(document.getElementById("q").value);}
+        dragName=null;
+      };
+      document.addEventListener("pointermove",move);
+      document.addEventListener("pointerup",up);
+    };
+  });
 }
 function renderAll(){renderDays();renderList(document.getElementById("q").value);}
 
@@ -288,6 +386,7 @@ function renderSheet(){
   const liveEl=body.querySelector(".slot.live");if(liveEl)setTimeout(()=>liveEl.scrollIntoView({block:"center"}),50);
 }
 scrim.onclick=()=>{scrim.classList.remove("on");sheet.classList.remove("on");};
+document.getElementById("backBtn").onclick=()=>{scrim.classList.remove("on");sheet.classList.remove("on");};
 
 /* ========================= CLOCK + BOOT ========================= */
 const DIAS=["domingo","lunes","martes","miércoles","jueves","viernes","sábado"],MES=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
@@ -295,8 +394,8 @@ function tick(){const d=new Date();document.getElementById("clock").textContent=
 tick();setInterval(tick,1000);
 renderList(); // skeleton
 (async()=>{await loadData();showStatus();renderAll();})();
-setInterval(()=>{if(selectedDay===MODEL?.todayKey)renderList(document.getElementById("q").value);},30000);
-setInterval(async()=>{await loadData();showStatus();renderAll();},30*60000);
+setInterval(()=>{if(!reorderMode && selectedDay===MODEL?.todayKey)renderList(document.getElementById("q").value);},30000);
+setInterval(async()=>{if(reorderMode)return;await loadData();showStatus();renderAll();},30*60000);
 document.getElementById("q").addEventListener("input",e=>renderList(e.target.value));
 
 /* Inline manifest for Android/Chrome */

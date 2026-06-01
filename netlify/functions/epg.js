@@ -6,8 +6,18 @@
 
 const zlib = require("zlib");
 
-// ── The source feed. If this ever stops working, this is the ONE line to change.
-const FEED_URL = "https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz";
+// ── Sources. The function MERGES every source that loads successfully:
+//    programmes are combined per channel and de-duplicated by start-time.
+//    Any source that fails (404, timeout, blocked) is silently skipped, so
+//    adding an experimental URL can never break the app.
+//
+//    The free epgshare01 ES1 feed below works and carries ~2-3 days.
+//    Free Spanish feeds are capped at a few days; for a guaranteed 7-day guide,
+//    add a working paid XMLTV URL as a second entry here.
+const FEEDS = [
+  "https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz"
+  // , "https://your-extra-source/guide.xml"   // optional second source
+];
 
 // ── Channels we want, in display order. Each has match patterns (normalised),
 //    a channel number and a colour. Anything not matched is simply skipped —
@@ -88,36 +98,48 @@ exports.handler = async (event) => {
   }
 
   try {
-    const xml = await fetchFeed(FEED_URL);
+    // Fetch every source; keep the ones that succeed.
+    const xmls = [];
+    for (const url of FEEDS) {
+      try { xmls.push(await fetchFeed(url)); } catch(e){ /* skip failed source */ }
+    }
+    if (!xmls.length) throw new Error("No sources available");
 
-    // 1) Channels: id -> {name, icon}
+    // 1) Channels (merged across sources): id -> {name, icon}
     const chanMeta = {};
-    const cre = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g; let cm;
-    while ((cm = cre.exec(xml))) {
-      const id = cm[1];
-      const name = inner(cm[2], "display-name");
-      const iconM = cm[2].match(/<icon[^>]*src="([^"]+)"/);
-      chanMeta[id] = { name, icon: iconM ? iconM[1] : "" };
+    for (const xml of xmls) {
+      const cre = /<channel id="([^"]+)">([\s\S]*?)<\/channel>/g; let cm;
+      while ((cm = cre.exec(xml))) {
+        const id = cm[1];
+        const name = inner(cm[2], "display-name");
+        const iconM = cm[2].match(/<icon[^>]*src="([^"]+)"/);
+        if (!chanMeta[id]) chanMeta[id] = { name, icon: iconM ? iconM[1] : "" };
+        else { if(!chanMeta[id].name) chanMeta[id].name=name; if(!chanMeta[id].icon&&iconM) chanMeta[id].icon=iconM[1]; }
+      }
     }
 
     if (debugList) {
       const list = Object.entries(chanMeta).map(([id,v])=>({ id, name:v.name })).sort((a,b)=>a.name.localeCompare(b.name));
-      return { statusCode:200, headers, body: JSON.stringify({ count:list.length, channels:list }) };
+      return { statusCode:200, headers, body: JSON.stringify({ sources:xmls.length, count:list.length, channels:list }) };
     }
 
-    // 2) Programmes within window (earlier today .. +8 days), grouped by channel id.
-    //    The free feed only publishes a few days ahead, so we grab everything it has.
+    // 2) Programmes within window (earlier today .. +8 days), merged + de-duplicated.
+    //    Free feeds publish only a few days ahead; we grab everything available.
     const now = Date.now(), lo = now-12*3600e3, hi = now+8*24*3600e3;
-    const byChan = {};
-    const pre = /<programme start="([^"]+)" stop="([^"]+)" channel="([^"]+)">([\s\S]*?)<\/programme>/g; let pm;
-    while ((pm = pre.exec(xml))) {
-      const s = parseTime(pm[1]), e = parseTime(pm[2]);
-      if (s===null || e===null || e<lo || s>hi) continue;
-      const id = pm[3], blk = pm[4];
-      (byChan[id] = byChan[id] || []).push({
-        s, e, t: inner(blk,"title") || "Sin título",
-        g: inner(blk,"category") || "", d: (inner(blk,"desc") || "").slice(0,140)
-      });
+    const byChan = {}, seen = {};
+    for (const xml of xmls) {
+      const pre = /<programme start="([^"]+)" stop="([^"]+)" channel="([^"]+)">([\s\S]*?)<\/programme>/g; let pm;
+      while ((pm = pre.exec(xml))) {
+        const s = parseTime(pm[1]), e = parseTime(pm[2]);
+        if (s===null || e===null || e<lo || s>hi) continue;
+        const id = pm[3], blk = pm[4];
+        const dedupe = id+"|"+s;            // same channel + same start = duplicate
+        if (seen[dedupe]) continue; seen[dedupe] = 1;
+        (byChan[id] = byChan[id] || []).push({
+          s, e, t: inner(blk,"title") || "Sin título",
+          g: inner(blk,"category") || "", d: (inner(blk,"desc") || "").slice(0,140)
+        });
+      }
     }
 
     // 3) Build channel objects with normalised names
