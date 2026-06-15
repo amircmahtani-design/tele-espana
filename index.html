@@ -42,6 +42,9 @@
   /* date strip */
   .toolbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--bg2);color:var(--muted);font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.03em;padding:8px 12px;border-radius:13px;cursor:pointer;white-space:nowrap;}
   .toolbtn.active{background:var(--gold);color:#1a1221;border-color:transparent;}
+  .seg{display:inline-flex;background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:3px;gap:3px;}
+  .segbtn{border:none;background:transparent;color:var(--muted);font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.02em;padding:6px 13px;border-radius:10px;cursor:pointer;white-space:nowrap;}
+  .segbtn.sel{background:var(--ink);color:#1a1221;}
   .card.dragging{opacity:.45;border-color:var(--gold);}
   .card.dragover{border-color:var(--gold);box-shadow:0 -3px 0 -1px var(--gold);}
   .drag-handle{display:none;flex:0 0 auto;color:var(--muted2);font-size:22px;line-height:1;padding:0 4px 0 0;cursor:grab;touch-action:none;}
@@ -132,8 +135,12 @@
       <input id="q" type="search" placeholder="Buscar canal…" autocomplete="off">
     </div>
     <div class="days" id="days"></div>
-    <div style="display:flex;justify-content:flex-end;margin-top:8px;">
-      <button class="toolbtn" id="reorderBtn">↕ Reordenar canales</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:9px;">
+      <div class="seg" id="tzSeg">
+        <button class="segbtn sel" data-tz="local" id="segLocal">Mi hora</button>
+        <button class="segbtn" data-tz="madrid">España</button>
+      </div>
+      <button class="toolbtn" id="reorderBtn">↕ Reordenar</button>
     </div>
   </div>
 </header>
@@ -193,6 +200,18 @@ function sampleModel(){
 
 /* ========================= STATE + LOAD ========================= */
 let MODEL=null,selectedDay=null;
+// Time reference frame. "local" = the phone's own timezone (e.g. Dubai),
+// "madrid" = Spanish broadcast time. Everything (times, day grouping, labels)
+// follows viewTz; "on now" is always correct because it compares absolute time.
+const localTz=Intl.DateTimeFormat().resolvedOptions().timeZone||"Europe/Madrid";
+let tzMode=(()=>{try{return localStorage.getItem("teleTz")||"local";}catch(e){return "local";}})();
+let viewTz=tzMode==="madrid"?"Europe/Madrid":localTz;
+function cityName(tz){const p=(tz||"").split("/").pop()||tz;return p.replace(/_/g," ");}
+function offsetVsSpain(){
+  const at=new Date();
+  const off=tz=>{const u=new Date(at.toLocaleString("en-US",{timeZone:"UTC"}));const l=new Date(at.toLocaleString("en-US",{timeZone:tz}));return (l-u)/3600000;};
+  return Math.round(off(localTz)-off("Europe/Madrid"));
+}
 function applySavedOrder(){
   let order=[];
   try{order=JSON.parse(localStorage.getItem("teleOrder")||"[]");}catch(e){}
@@ -211,7 +230,7 @@ async function loadData(){
   }catch(e){}
   MODEL=sampleModel();indexDays();applySavedOrder();
 }
-function keyOf(ms){return new Intl.DateTimeFormat("en-CA",{timeZone:MODEL.tz,year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(ms));}
+function keyOf(ms){return new Intl.DateTimeFormat("en-CA",{timeZone:viewTz,year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(ms));}
 function indexDays(){
   const set=new Set();
   for(const ch of MODEL.channels){ch._days={};for(const p of ch.programmes){const k=keyOf(p.s);(ch._days[k]=ch._days[k]||[]).push(p);}for(const k in ch._days)ch._days[k].sort((a,b)=>a.s-b.s);Object.keys(ch._days).forEach(k=>set.add(k));}
@@ -221,14 +240,14 @@ function indexDays(){
 }
 
 /* =========================== HELPERS =========================== */
-const fmtT=ms=>new Intl.DateTimeFormat("es-ES",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:MODEL.tz}).format(new Date(ms));
-const minOfDay=ms=>{const s=new Intl.DateTimeFormat("en-GB",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:MODEL.tz}).format(new Date(ms));const[h,m]=s.split(":").map(Number);return h*60+m;};
+const fmtT=ms=>new Intl.DateTimeFormat("es-ES",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:viewTz}).format(new Date(ms));
+const minOfDay=ms=>{const s=new Intl.DateTimeFormat("en-GB",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:viewTz}).format(new Date(ms));const[h,m]=s.split(":").map(Number);return h*60+m;};
 function dayLabel(key){
   if(key===MODEL.todayKey)return{top:"Hoy",sub:""};
   if(key===MODEL.tomorrowKey)return{top:"Mañana",sub:""};
   const[Y,M,D]=key.split("-").map(Number);const ms=Date.UTC(Y,M-1,D,12,0,0);
-  const wd=new Intl.DateTimeFormat("es-ES",{weekday:"short",timeZone:MODEL.tz}).format(ms).replace(".","");
-  const dd=new Intl.DateTimeFormat("es-ES",{day:"numeric",timeZone:MODEL.tz}).format(ms);
+  const wd=new Intl.DateTimeFormat("es-ES",{weekday:"short",timeZone:viewTz}).format(ms).replace(".","");
+  const dd=new Intl.DateTimeFormat("es-ES",{day:"numeric",timeZone:viewTz}).format(ms);
   return{top:wd,sub:dd};
 }
 function curIndex(p){const n=Date.now();let i=p.findIndex(x=>n>=x.s&&n<x.e);if(i<0)i=p.findIndex(x=>x.s>n);if(i<0)i=p.length-1;return i;}
@@ -239,10 +258,15 @@ function prime(progs){let best=progs[0],bd=1e9;for(const p of progs){const d=Mat
 
 /* =========================== RENDER ============================ */
 const listEl=document.getElementById("list"),daysEl=document.getElementById("days");
+function tzNote(){
+  if(viewTz==="Europe/Madrid") return "hora de España";
+  const o=offsetVsSpain();
+  return "tu hora · "+cityName(localTz)+(o?` (${o>0?"+":""}${o} h vs España)`:"");
+}
 function showStatus(){
   const tag=document.getElementById("liveTag"),lbl=document.getElementById("liveLabel"),note=document.getElementById("srcNote");
-  if(MODEL.sample){tag.className="live sample";lbl.textContent="Datos de muestra";note.textContent="· no se pudo cargar la guía en directo";}
-  else{tag.className="live on";lbl.textContent="En directo · datos reales";note.textContent="· hora peninsular española";}
+  if(MODEL.sample){tag.className="live sample";lbl.textContent="Datos de muestra";note.textContent="· "+tzNote();}
+  else{tag.className="live on";lbl.textContent="En directo · datos reales";note.textContent="· "+tzNote();}
 }
 function renderDays(){
   daysEl.innerHTML=MODEL.dayKeys.map(k=>{const l=dayLabel(k);return `<div class="day ${k===selectedDay?'sel':''}" data-k="${k}"><div class="dtop">${l.top}</div>${l.sub?`<div class="dsub">${l.sub}</div>`:`<div class="dsub">&nbsp;</div>`}</div>`;}).join("");
@@ -294,6 +318,20 @@ function setReorder(on){
   renderList(document.getElementById("q").value);
 }
 document.getElementById("reorderBtn").onclick=()=>setReorder(!reorderMode);
+
+function setTz(mode){
+  tzMode=mode;
+  viewTz=mode==="madrid"?"Europe/Madrid":localTz;
+  try{localStorage.setItem("teleTz",mode);}catch(e){}
+  [...document.querySelectorAll("#tzSeg .segbtn")].forEach(b=>b.classList.toggle("sel",b.dataset.tz===mode));
+  if(MODEL){
+    indexDays();                    // re-bucket days in the new timezone
+    selectedDay=MODEL.dayKeys.includes(MODEL.todayKey)?MODEL.todayKey:MODEL.dayKeys[0];
+    showStatus();
+    renderAll();
+  }
+}
+[...document.querySelectorAll("#tzSeg .segbtn")].forEach(b=>b.onclick=()=>setTz(b.dataset.tz));
 
 function cardEls(){return [...listEl.querySelectorAll(".card")];}
 function reorderByDrop(fromName,toName,after){
@@ -361,7 +399,7 @@ function openSheet(idx,day){
   const lg=document.getElementById("sheetLogo");
   lg.innerHTML=ch.icon?`<img src="${ch.icon}" onerror="this.parentNode.textContent='${initials(ch.name)}'">`:initials(ch.name);
   lg.style.background=`linear-gradient(145deg,${ch.color},${shade(ch.color,-28)})`;
-  document.getElementById("sheetNote").innerHTML=MODEL.sample?"Programación de muestra.":"Guía en directo · hora peninsular española · fuente: "+esc(MODEL.source||"EPG");
+  document.getElementById("sheetNote").innerHTML=(MODEL.sample?"Programación de muestra":"Guía en directo")+" · "+tzNote();
   renderSheet();
   scrim.classList.add("on");sheet.classList.add("on");
 }
@@ -393,6 +431,7 @@ const DIAS=["domingo","lunes","martes","miércoles","jueves","viernes","sábado"
 function tick(){const d=new Date();document.getElementById("clock").textContent=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");document.getElementById("date").textContent=`${DIAS[d.getDay()]}, ${d.getDate()} ${MES[d.getMonth()]}`;}
 tick();setInterval(tick,1000);
 renderList(); // skeleton
+[...document.querySelectorAll("#tzSeg .segbtn")].forEach(b=>b.classList.toggle("sel",b.dataset.tz===tzMode));
 (async()=>{await loadData();showStatus();renderAll();})();
 setInterval(()=>{if(!reorderMode && selectedDay===MODEL?.todayKey)renderList(document.getElementById("q").value);},30000);
 setInterval(async()=>{if(reorderMode)return;await loadData();showStatus();renderAll();},30*60000);
